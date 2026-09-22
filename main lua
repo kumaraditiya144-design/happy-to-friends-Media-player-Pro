@@ -1,0 +1,2484 @@
+require "import"
+
+import "android.app.*"
+import "android.os.*"
+import "android.content.*"
+import "android.media.*"
+import "android.media.audiofx.*"
+import "android.net.*"
+import "android.provider.MediaStore"
+import "android.view.*"
+import "android.widget.*"
+import "android.graphics.Color"
+import "android.graphics.drawable.ColorDrawable"
+import "java.io.File"
+import "java.util.ArrayList"
+
+local context = activity or service
+
+if context == nil then
+  return
+end
+
+-- =====================================================================
+-- CONSTANTS
+-- =====================================================================
+
+local APP_NAME = "Happy TOO Friends audio player pro"
+local DEVELOPER = "Developed by Aditya Poddar"
+local PREF_NAME = "HappyTooFriendsAudioPlayerProPrefs"
+local VERSION = "2.0"
+
+-- =====================================================================
+-- PREFERENCES
+-- =====================================================================
+
+local prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+local editor = prefs.edit()
+
+local function saveString(key, value)
+  pcall(function()
+    editor.putString(tostring(key), tostring(value))
+    editor.apply()
+  end)
+end
+
+local function saveBoolean(key, value)
+  pcall(function()
+    editor.putBoolean(tostring(key), value == true)
+    editor.apply()
+  end)
+end
+
+local function saveInteger(key, value)
+  pcall(function()
+    editor.putInt(tostring(key), tonumber(value) or 0)
+    editor.apply()
+  end)
+end
+
+local function saveFloat(key, value)
+  pcall(function()
+    editor.putFloat(tostring(key), tonumber(value) or 1)
+    editor.apply()
+  end)
+end
+
+local function getString(key, defaultValue)
+  local value = defaultValue
+  pcall(function()
+    value = prefs.getString(tostring(key), tostring(defaultValue))
+  end)
+  return value
+end
+
+local function getBoolean(key, defaultValue)
+  local value = defaultValue
+  pcall(function()
+    value = prefs.getBoolean(tostring(key), defaultValue)
+  end)
+  return value
+end
+
+local function getInteger(key, defaultValue)
+  local value = defaultValue
+  pcall(function()
+    value = prefs.getInt(tostring(key), defaultValue)
+  end)
+  return value
+end
+
+local function getFloat(key, defaultValue)
+  local value = defaultValue
+  pcall(function()
+    value = prefs.getFloat(tostring(key), defaultValue)
+  end)
+  return value
+end
+
+local function removeKey(key)
+  pcall(function()
+    editor.remove(tostring(key))
+    editor.apply()
+  end)
+end
+
+-- =====================================================================
+-- UTILITIES
+-- =====================================================================
+
+local function dp(value)
+  local density = 1
+  pcall(function()
+    density = context.getResources().getDisplayMetrics().density
+  end)
+  return math.floor((tonumber(value) or 0) * density + 0.5)
+end
+
+local function speak(text)
+  pcall(function()
+    if service and service.speak then
+      service.speak(tostring(text))
+    elseif service and service.tts then
+      service.tts.speak(tostring(text))
+    end
+  end)
+end
+
+local function toast(text)
+  pcall(function()
+    Toast.makeText(context, tostring(text), Toast.LENGTH_SHORT).show()
+  end)
+  speak(text)
+end
+
+local function normalize(value)
+  return tostring(value or ""):lower()
+end
+
+local function getFileName(path)
+  local name = tostring(path or ""):match("([^/]+)$")
+  return name or tostring(path or "")
+end
+
+local function removeExtension(name)
+  return tostring(name or ""):gsub("%.[^%.]+$", "")
+end
+
+local function formatTime(milliseconds)
+  local ms = tonumber(milliseconds) or 0
+
+  if ms < 0 then
+    ms = 0
+  end
+
+  local seconds = math.floor(ms / 1000)
+  local hours = math.floor(seconds / 3600)
+  local minutes = math.floor((seconds % 3600) / 60)
+  local remaining = seconds % 60
+
+  if hours > 0 then
+    return string.format("%02d:%02d:%02d", hours, minutes, remaining)
+  end
+
+  return string.format("%02d:%02d", minutes, remaining)
+end
+
+local function fileExists(path)
+  local result = false
+  pcall(function()
+    result = File(tostring(path)).exists()
+  end)
+  return result
+end
+
+local function isAudioFile(path)
+  local extension = tostring(path or ""):lower():match("%.([^%.]+)$")
+
+  local supported = {
+    mp3 = true, wav = true, m4a = true, aac = true,
+    ogg = true, opus = true, flac = true, amr = true,
+    ["3gp"] = true, mid = true, midi = true, wma = true,
+    mp4 = true, mka = true
+  }
+
+  return extension ~= nil and supported[extension] == true
+end
+
+local function showDialogSafely(dialog)
+  if dialog == nil then
+    return false
+  end
+
+  local shown = false
+
+  pcall(function()
+    local window = dialog.getWindow()
+    if window ~= nil then
+      if Build.VERSION.SDK_INT >= 26 then
+        window.setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
+      else
+        window.setType(WindowManager.LayoutParams.TYPE_PHONE)
+      end
+    end
+  end)
+
+  pcall(function()
+    dialog.show()
+    shown = true
+  end)
+
+  if not shown then
+    pcall(function()
+      dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+      dialog.show()
+      shown = true
+    end)
+  end
+
+  return shown
+end
+
+-- =====================================================================
+-- TRANSLATIONS
+-- =====================================================================
+
+local translations = {
+  ["English"] = {
+    appName = "Happy TOO Friends audio player pro",
+    play = "Play",
+    pause = "Pause",
+    stop = "Stop",
+    next = "Next",
+    previous = "Previous",
+    forward = "Forward",
+    rewind = "Rewind",
+    search = "Search",
+    refresh = "Refresh",
+    favorites = "Favorites",
+    allSongs = "All Songs",
+    settings = "Settings",
+    about = "About",
+    exit = "Close",
+    ["repeat"] = "Repeat",
+    shuffle = "Shuffle",
+    speed = "Speed",
+    sleepTimer = "Sleep Timer",
+    language = "Language",
+    theme = "Theme",
+    save = "Save",
+    cancel = "Cancel",
+    close = "Close",
+    reset = "Reset",
+    delete = "Delete",
+    rename = "Rename",
+    share = "Share",
+    information = "Information",
+    addFavorite = "Add to Favorites",
+    removeFavorite = "Remove from Favorites",
+    addToQueue = "Add to Queue",
+    playNext = "Play Next",
+    yes = "Yes",
+    no = "No",
+    on = "On",
+    off = "Off",
+    ["default"] = "Default",
+    system = "System",
+    dark = "Dark",
+    light = "Light",
+    playing = "Playing",
+    paused = "Paused",
+    stopped = "Stopped",
+    noAudio = "No audio files found",
+    noFavorites = "No favorite songs found",
+    settingsSaved = "Settings saved",
+    songDeleted = "Song deleted",
+    songRenamed = "Song renamed",
+    favoriteAdded = "Added to favorites",
+    favoriteRemoved = "Removed from favorites",
+    sleepDisabled = "Sleep timer disabled",
+    minutes = "minutes",
+    seconds = "seconds",
+    confirmDeleteText = "Do you want to delete this audio file?",
+    enterName = "Enter new name",
+    queue = "Queue",
+    queueEmpty = "Queue is empty",
+    clearQueue = "Clear Queue",
+    addedToQueue = "Added to queue",
+    addedToPlayNext = "Will play next",
+    recentlyPlayed = "Recently Played",
+    sortBy = "Sort by",
+    sortTitle = "Title",
+    sortArtist = "Artist",
+    sortDuration = "Duration",
+    sortDate = "Date added",
+    abRepeat = "A-B Repeat",
+    abSetA = "Point A set",
+    abSetB = "Point B set",
+    abClear = "A-B cleared",
+    abActive = "A-B Repeat active",
+    equalizer = "Equalizer",
+    bassBoost = "Bass Boost",
+    enabled = "Enabled",
+    disabled = "Disabled",
+    volume = "Volume",
+    balance = "Balance",
+    scanFolder = "Scan Folder",
+    noPermission = "Permission denied",
+    playbackError = "Playback error",
+    errorNoFile = "File not found",
+    viewQueue = "View Queue",
+    sleepTimerFinished = "Sleep timer finished",
+    aboutText = "Happy TOO Friends audio player pro " .. VERSION .. "\n\nAccessible audio player with playback controls, search, favorites, queue, repeat, shuffle, speed control, A-B repeat, equalizer, sleep timer and much more.\n\nDeveloped by Aditya Poddar"
+  }
+}
+
+local currentLanguage = "English"
+
+local function T(key)
+  local languageTable = translations["English"]
+  local value = languageTable[key]
+
+  if value == nil then
+    value = translations["English"][key]
+  end
+
+  return value or tostring(key)
+end
+
+-- =====================================================================
+-- PERSISTENT SETTINGS STATE
+-- =====================================================================
+
+local skipSeconds = getInteger("skipSeconds", 10)
+local playbackSpeed = getFloat("playbackSpeed", 1.0)
+local repeatMode = getString("repeatMode", "OFF")
+local shuffleEnabled = getBoolean("shuffleEnabled", false)
+local autoNext = getBoolean("autoNext", true)
+local resumePlayback = getBoolean("resumePlayback", true)
+local confirmDelete = getBoolean("confirmDelete", true)
+local showMetadata = getBoolean("showMetadata", true)
+local backgroundPlayback = getBoolean("backgroundPlayback", true)
+local sleepTimerMinutes = getInteger("sleepTimerMinutes", 0)
+local currentTheme = getString("theme", "System")
+local sortMode = getString("sortMode", "Title")
+
+-- =====================================================================
+-- RUNTIME STATE
+-- =====================================================================
+
+local audioList = {}
+local visibleList = {}
+local queue = {}
+local recentlyPlayed = {}
+local recentlyPlayedLimit = 30
+
+local player = nil
+local currentIndex = 0
+local currentPath = nil
+local currentTitle = nil
+local currentDuration = 0
+local currentPosition = 0
+local isPrepared = false
+local isPlaying = false
+local isSeeking = false
+
+local abRepeatA = -1
+local abRepeatB = -1
+
+local equalizer = nil
+local bassBoost = nil
+local audioSessionId = 0
+
+local audioFocusManager = nil
+local audioFocusListener = nil
+local wakeLock = nil
+
+local mainDialog = nil
+local settingsDialog = nil
+local aboutDialog = nil
+local queueDialog = nil
+local equalizerDialog = nil
+
+local listView = nil
+local titleView = nil
+local subtitleView = nil
+local seekBar = nil
+local playButton = nil
+local repeatButton = nil
+local shuffleButton = nil
+local speedButton = nil
+local positionView = nil
+local durationView = nil
+local searchEdit = nil
+local abButton = nil
+
+local progressHandler = nil
+local progressRunnable = nil
+local sleepHandler = nil
+local sleepRunnable = nil
+
+local showFavoritesOnly = false
+local showRecentlyPlayed = false
+
+-- Forward declarations for mutually recursive functions
+local updateButtons
+local startProgressUpdater
+local stopProgressUpdater
+local updateNowPlaying
+local releasePlayer
+local loadAndPlayPath
+local playNext
+local playPrevious
+local playCurrent
+local playItem
+local stopCurrent
+
+-- =====================================================================
+-- AUDIO FOCUS
+-- =====================================================================
+
+local function requestAudioFocus()
+  pcall(function()
+    audioFocusManager = context.getSystemService(Context.AUDIO_SERVICE)
+
+    if audioFocusManager == nil then
+      return
+    end
+
+    if audioFocusListener == nil then
+      audioFocusListener = AudioManager.OnAudioFocusChangeListener{
+        onAudioFocusChange = function(focusChange)
+          if focusChange == AudioManager.AUDIOFOCUS_LOSS then
+            if player ~= nil and isPrepared then
+              pcall(function()
+                if player.isPlaying() then
+                  player.pause()
+                  isPlaying = false
+                  updateButtons()
+                  stopProgressUpdater()
+                end
+              end)
+            end
+          elseif focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT then
+            if player ~= nil and isPrepared then
+              pcall(function()
+                if player.isPlaying() then
+                  player.pause()
+                  isPlaying = false
+                  updateButtons()
+                  stopProgressUpdater()
+                end
+              end)
+            end
+          elseif focusChange == AudioManager.AUDIOFOCUS_GAIN then
+            if player ~= nil and isPrepared and not isPlaying then
+              pcall(function()
+                player.start()
+                isPlaying = true
+                updateButtons()
+                startProgressUpdater()
+              end)
+            end
+          end
+        end
+      }
+    end
+
+    if Build.VERSION.SDK_INT >= 26 then
+      local request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+        .setOnAudioFocusChangeListener(audioFocusListener)
+        .setAudioAttributes(
+          AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+            .build()
+        )
+        .build()
+      audioFocusManager.requestAudioFocus(request)
+    else
+      audioFocusManager.requestAudioFocus(
+        audioFocusListener,
+        AudioManager.STREAM_MUSIC,
+        AudioManager.AUDIOFOCUS_GAIN
+      )
+    end
+  end)
+end
+
+local function abandonAudioFocus()
+  pcall(function()
+    if audioFocusManager ~= nil and audioFocusListener ~= nil then
+      audioFocusManager.abandonAudioFocus(audioFocusListener)
+    end
+  end)
+end
+
+-- =====================================================================
+-- WAKE LOCK
+-- =====================================================================
+
+local function acquireWakeLock()
+  if not backgroundPlayback then
+    return
+  end
+
+  pcall(function()
+    if wakeLock == nil then
+      local powerManager = context.getSystemService(Context.POWER_SERVICE)
+      if powerManager ~= nil then
+        wakeLock = powerManager.newWakeLock(
+          PowerManager.PARTIAL_WAKE_LOCK,
+          "HappyTooFriends::PlaybackLock"
+        )
+        wakeLock.setReferenceCounted(false)
+      end
+    end
+
+    if wakeLock ~= nil and not wakeLock.isHeld() then
+      wakeLock.acquire()
+    end
+  end)
+end
+
+local function releaseWakeLock()
+  pcall(function()
+    if wakeLock ~= nil and wakeLock.isHeld() then
+      wakeLock.release()
+    end
+  end)
+end
+
+-- =====================================================================
+-- EQUALIZER
+-- =====================================================================
+
+local function attachAudioEffects(sessionId)
+  pcall(function()
+    audioSessionId = sessionId
+
+    if equalizer ~= nil then
+      equalizer.release()
+      equalizer = nil
+    end
+
+    if bassBoost ~= nil then
+      bassBoost.release()
+      bassBoost = nil
+    end
+
+    if sessionId ~= nil and sessionId ~= 0 then
+      equalizer = Equalizer(0, sessionId)
+      equalizer.setEnabled(getBoolean("eqEnabled", false))
+
+      bassBoost = BassBoost(0, sessionId)
+      bassBoost.setEnabled(getBoolean("bassEnabled", false))
+      bassBoost.setStrength(tonumber(getInteger("bassStrength", 500)) or 500)
+    end
+  end)
+end
+
+local function releaseAudioEffects()
+  pcall(function()
+    if equalizer ~= nil then
+      equalizer.setEnabled(false)
+      equalizer.release()
+    end
+    equalizer = nil
+  end)
+
+  pcall(function()
+    if bassBoost ~= nil then
+      bassBoost.setEnabled(false)
+      bassBoost.release()
+    end
+    bassBoost = nil
+  end)
+end
+
+-- =====================================================================
+-- PROGRESS UPDATER
+-- =====================================================================
+
+stopProgressUpdater = function()
+  pcall(function()
+    if progressHandler ~= nil and progressRunnable ~= nil then
+      progressHandler.removeCallbacks(progressRunnable)
+    end
+  end)
+  progressHandler = nil
+  progressRunnable = nil
+end
+
+local function updateProgress()
+  if player == nil or not isPrepared then
+    return
+  end
+
+  if isSeeking then
+    return
+  end
+
+  local position = 0
+  local duration = 0
+
+  pcall(function()
+    position = player.getCurrentPosition()
+    duration = player.getDuration()
+  end)
+
+  currentPosition = position
+  currentDuration = duration
+
+  pcall(function()
+    if seekBar ~= nil and duration > 0 then
+      seekBar.setMax(duration)
+      seekBar.setProgress(position)
+    end
+
+    if positionView ~= nil then
+      positionView.setText(formatTime(position))
+    end
+
+    if durationView ~= nil then
+      durationView.setText(formatTime(duration))
+    end
+  end)
+
+  if abRepeatA >= 0 and abRepeatB > abRepeatA then
+    if position >= abRepeatB then
+      pcall(function()
+        player.seekTo(abRepeatA)
+      end)
+    end
+  end
+end
+
+startProgressUpdater = function()
+  stopProgressUpdater()
+
+  progressHandler = Handler()
+
+  progressRunnable = Runnable{
+    run = function()
+      updateProgress()
+
+      pcall(function()
+        if progressHandler ~= nil and progressRunnable ~= nil and isPlaying then
+          progressHandler.postDelayed(progressRunnable, 500)
+        end
+      end)
+    end
+  }
+
+  pcall(function()
+    progressHandler.post(progressRunnable)
+  end)
+end
+
+-- =====================================================================
+-- PLAYER CONTROL
+-- =====================================================================
+
+local function setPlaybackSpeed()
+  if player == nil then
+    return
+  end
+
+  pcall(function()
+    if Build.VERSION.SDK_INT >= 23 then
+      local parameters = player.getPlaybackParams()
+      parameters.setSpeed(playbackSpeed)
+      player.setPlaybackParams(parameters)
+    end
+  end)
+end
+
+updateButtons = function()
+  pcall(function()
+    if playButton ~= nil then
+      if isPlaying then
+        playButton.setText(T("pause"))
+      else
+        playButton.setText(T("play"))
+      end
+    end
+
+    if repeatButton ~= nil then
+      repeatButton.setText(T("repeat") .. ": " .. repeatMode)
+    end
+
+    if shuffleButton ~= nil then
+      local state = T("off")
+      if shuffleEnabled then
+        state = T("on")
+      end
+      shuffleButton.setText(T("shuffle") .. ": " .. state)
+    end
+
+    if speedButton ~= nil then
+      speedButton.setText(T("speed") .. ": " .. tostring(playbackSpeed) .. "x")
+    end
+
+    if abButton ~= nil then
+      if abRepeatA >= 0 and abRepeatB > abRepeatA then
+        abButton.setText("A-B: ON")
+      elseif abRepeatA >= 0 then
+        abButton.setText("A-B: A")
+      else
+        abButton.setText("A-B")
+      end
+    end
+  end)
+end
+
+updateNowPlaying = function()
+  pcall(function()
+    if titleView ~= nil then
+      titleView.setText(currentTitle or T("appName"))
+    end
+
+    if subtitleView ~= nil then
+      if currentPath then
+        subtitleView.setText(getFileName(currentPath))
+      else
+        subtitleView.setText(DEVELOPER)
+      end
+    end
+  end)
+end
+
+local function getFavoriteKey(path)
+  return "favorite_" .. tostring(path or "")
+end
+
+local function isFavorite(path)
+  return getBoolean(getFavoriteKey(path), false)
+end
+
+local function setFavorite(path, value)
+  saveBoolean(getFavoriteKey(path), value)
+end
+
+local function addToRecentlyPlayed(item)
+  if item == nil or item.path == nil then
+    return
+  end
+
+  for i = #recentlyPlayed, 1, -1 do
+    if recentlyPlayed[i].path == item.path then
+      table.remove(recentlyPlayed, i)
+    end
+  end
+
+  table.insert(recentlyPlayed, 1, {
+    path = item.path,
+    title = item.title,
+    artist = item.artist,
+    duration = item.duration
+  })
+
+  while #recentlyPlayed > recentlyPlayedLimit do
+    table.remove(recentlyPlayed)
+  end
+end
+
+local function savePositionForPath(path)
+  if path == nil or player == nil or not isPrepared then
+    return
+  end
+
+  pcall(function()
+    local pos = player.getCurrentPosition()
+    if pos > 1000 then
+      saveInteger("position_" .. path, pos)
+    end
+  end)
+end
+
+local function getSavedPositionForPath(path)
+  if path == nil then
+    return 0
+  end
+  return getInteger("position_" .. path, 0)
+end
+
+local function clearSavedPositionForPath(path)
+  if path == nil then
+    return
+  end
+  removeKey("position_" .. path)
+end
+
+releasePlayer = function()
+  stopProgressUpdater()
+
+  savePositionForPath(currentPath)
+
+  releaseAudioEffects()
+  releaseWakeLock()
+
+  pcall(function()
+    if player ~= nil then
+      player.stop()
+    end
+  end)
+
+  pcall(function()
+    if player ~= nil then
+      player.reset()
+      player.release()
+    end
+  end)
+
+  player = nil
+  isPrepared = false
+  isPlaying = false
+  currentDuration = 0
+  currentPosition = 0
+end
+
+loadAndPlayPath = function(path, title, index)
+  if path == nil or path == "" then
+    toast(T("noAudio"))
+    return
+  end
+
+  if not fileExists(path) then
+    toast(T("errorNoFile"))
+    return
+  end
+
+  releasePlayer()
+
+  currentPath = path
+  currentTitle = title
+  currentIndex = index or 0
+  currentPosition = 0
+  abRepeatA = -1
+  abRepeatB = -1
+
+  saveString("lastPath", path)
+  saveInteger("lastIndex", currentIndex)
+
+  player = MediaPlayer()
+
+  pcall(function()
+    player.setAudioStreamType(AudioManager.STREAM_MUSIC)
+  end)
+
+  pcall(function()
+    player.setOnPreparedListener{
+      onPrepared = function(mp)
+        isPrepared = true
+        isPlaying = true
+
+        pcall(function()
+          currentDuration = mp.getDuration()
+        end)
+
+        setPlaybackSpeed()
+
+        local sessionId = 0
+
+        pcall(function()
+          sessionId = mp.getAudioSessionId()
+        end)
+
+        attachAudioEffects(sessionId)
+
+        if resumePlayback then
+          local savedPosition = getSavedPositionForPath(currentPath)
+          if savedPosition > 3000 and savedPosition < currentDuration - 3000 then
+            pcall(function()
+              mp.seekTo(savedPosition)
+            end)
+          end
+        end
+
+        pcall(function()
+          mp.start()
+        end)
+
+        requestAudioFocus()
+        acquireWakeLock()
+        updateButtons()
+        updateNowPlaying()
+        startProgressUpdater()
+
+        addToRecentlyPlayed({
+          path = currentPath,
+          title = currentTitle,
+          artist = "",
+          duration = currentDuration
+        })
+
+        toast(T("playing") .. ": " .. tostring(currentTitle or ""))
+      end
+    }
+  end)
+
+  pcall(function()
+    player.setOnCompletionListener{
+      onCompletion = function(mp)
+        isPlaying = false
+        stopProgressUpdater()
+        clearSavedPositionForPath(currentPath)
+
+        if repeatMode == "ONE" then
+          pcall(function()
+            mp.seekTo(0)
+            mp.start()
+            isPlaying = true
+            startProgressUpdater()
+            updateButtons()
+          end)
+        elseif autoNext then
+          if #queue > 0 then
+            local nextItem = table.remove(queue, 1)
+            loadAndPlayPath(nextItem.path, nextItem.title, 0)
+          else
+            playNext()
+          end
+        else
+          updateButtons()
+        end
+      end
+    }
+  end)
+
+  pcall(function()
+    player.setOnErrorListener{
+      onError = function(mp, what, extra)
+        isPrepared = false
+        isPlaying = false
+        stopProgressUpdater()
+        releaseWakeLock()
+        toast(T("playbackError") .. ": " .. tostring(what))
+        return true
+      end
+    }
+  end)
+
+  pcall(function()
+    player.setDataSource(path)
+    player.prepareAsync()
+  end)
+end
+
+playNext = function()
+  if #queue > 0 then
+    local nextItem = table.remove(queue, 1)
+    loadAndPlayPath(nextItem.path, nextItem.title, 0)
+    return
+  end
+
+  if #visibleList == 0 then
+    return
+  end
+
+  local nextIndex
+
+  if shuffleEnabled then
+    math.randomseed(os.time() + math.random(1, 1000))
+    nextIndex = math.random(1, #visibleList)
+  else
+    nextIndex = currentIndex + 1
+    if nextIndex > #visibleList then
+      if repeatMode == "ALL" then
+        nextIndex = 1
+      else
+        nextIndex = #visibleList
+      end
+    end
+  end
+
+  local item = visibleList[nextIndex]
+
+  if item ~= nil then
+    currentIndex = nextIndex
+    loadAndPlayPath(item.path, item.title, nextIndex)
+  end
+end
+
+playPrevious = function()
+  if #visibleList == 0 then
+    return
+  end
+
+  if player ~= nil and isPrepared then
+    local position = 0
+    pcall(function()
+      position = player.getCurrentPosition()
+    end)
+
+    if position > 5000 then
+      pcall(function()
+        player.seekTo(0)
+      end)
+      return
+    end
+  end
+
+  local previousIndex = currentIndex - 1
+
+  if previousIndex < 1 then
+    previousIndex = #visibleList
+  end
+
+  local item = visibleList[previousIndex]
+  if item ~= nil then
+    currentIndex = previousIndex
+    loadAndPlayPath(item.path, item.title, previousIndex)
+  end
+end
+
+playCurrent = function()
+  if currentPath == nil then
+    toast(T("noAudio"))
+    return
+  end
+
+  if player ~= nil and isPrepared then
+    pcall(function()
+      if player.isPlaying() then
+        player.pause()
+        isPlaying = false
+        savePositionForPath(currentPath)
+        stopProgressUpdater()
+        releaseWakeLock()
+        toast(T("paused"))
+      else
+        player.start()
+        isPlaying = true
+        requestAudioFocus()
+        acquireWakeLock()
+        startProgressUpdater()
+        toast(T("playing"))
+      end
+    end)
+
+    updateButtons()
+  else
+    loadAndPlayPath(currentPath, currentTitle, currentIndex)
+  end
+end
+
+playItem = function(index)
+  if index == nil or index < 1 or index > #visibleList then
+    return
+  end
+
+  local item = visibleList[index]
+
+  if item == nil then
+    return
+  end
+
+  currentIndex = index
+  loadAndPlayPath(item.path, item.title, index)
+end
+
+stopCurrent = function()
+  pcall(function()
+    if player ~= nil and isPrepared then
+      player.stop()
+    end
+  end)
+
+  savePositionForPath(currentPath)
+  isPrepared = false
+  isPlaying = false
+  stopProgressUpdater()
+  releaseWakeLock()
+  releaseAudioEffects()
+  updateButtons()
+  toast(T("stopped"))
+end
+
+local function seekRelative(milliseconds)
+  if player == nil or not isPrepared then
+    return
+  end
+
+  local position = 0
+  local duration = 0
+
+  pcall(function()
+    position = player.getCurrentPosition()
+    duration = player.getDuration()
+  end)
+
+  local newPosition = position + milliseconds
+
+  if newPosition < 0 then
+    newPosition = 0
+  end
+
+  if duration > 0 and newPosition > duration then
+    newPosition = duration
+  end
+
+  pcall(function()
+    player.seekTo(newPosition)
+  end)
+
+  updateProgress()
+end
+
+local function cycleRepeat()
+  if repeatMode == "OFF" then
+    repeatMode = "ALL"
+  elseif repeatMode == "ALL" then
+    repeatMode = "ONE"
+  else
+    repeatMode = "OFF"
+  end
+
+  saveString("repeatMode", repeatMode)
+  updateButtons()
+  toast(T("repeat") .. ": " .. repeatMode)
+end
+
+local function cycleShuffle()
+  shuffleEnabled = not shuffleEnabled
+  saveBoolean("shuffleEnabled", shuffleEnabled)
+  updateButtons()
+
+  if shuffleEnabled then
+    toast(T("shuffle") .. ": " .. T("on"))
+  else
+    toast(T("shuffle") .. ": " .. T("off"))
+  end
+end
+
+local function cycleSpeed()
+  local speeds = {0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0}
+  local currentPos = 3
+
+  for i = 1, #speeds do
+    if math.abs(speeds[i] - playbackSpeed) < 0.01 then
+      currentPos = i
+      break
+    end
+  end
+
+  currentPos = currentPos + 1
+  if currentPos > #speeds then
+    currentPos = 1
+  end
+
+  playbackSpeed = speeds[currentPos]
+  saveFloat("playbackSpeed", playbackSpeed)
+  setPlaybackSpeed()
+  updateButtons()
+  toast(T("speed") .. ": " .. tostring(playbackSpeed) .. "x")
+end
+
+-- =====================================================================
+-- A-B REPEAT
+-- =====================================================================
+
+local function cycleABRepeat()
+  if player == nil or not isPrepared then
+    toast(T("noAudio"))
+    return
+  end
+
+  local position = 0
+  pcall(function()
+    position = player.getCurrentPosition()
+  end)
+
+  if abRepeatA < 0 then
+    abRepeatA = position
+    abRepeatB = -1
+    toast(T("abSetA") .. ": " .. formatTime(position))
+  elseif abRepeatB < 0 then
+    if position <= abRepeatA then
+      toast("B must be after A")
+      return
+    end
+    abRepeatB = position
+    toast(T("abSetB") .. ": " .. formatTime(position) .. " - " .. T("abActive"))
+  else
+    abRepeatA = -1
+    abRepeatB = -1
+    toast(T("abClear"))
+  end
+
+  updateButtons()
+end
+
+-- =====================================================================
+-- SLEEP TIMER
+-- =====================================================================
+
+local function cancelSleepTimer()
+  pcall(function()
+    if sleepHandler ~= nil and sleepRunnable ~= nil then
+      sleepHandler.removeCallbacks(sleepRunnable)
+    end
+  end)
+
+  sleepHandler = nil
+  sleepRunnable = nil
+  sleepTimerMinutes = 0
+  saveInteger("sleepTimerMinutes", 0)
+end
+
+local function setSleepTimer(minutes)
+  cancelSleepTimer()
+
+  minutes = tonumber(minutes) or 0
+
+  if minutes <= 0 then
+    toast(T("sleepDisabled"))
+    return
+  end
+
+  sleepTimerMinutes = minutes
+  saveInteger("sleepTimerMinutes", minutes)
+
+  sleepHandler = Handler()
+
+  sleepRunnable = Runnable{
+    run = function()
+      pcall(function()
+        if player ~= nil and isPrepared then
+          local steps = 10
+          for i = steps, 1, -1 do
+            local vol = i / steps
+            pcall(function()
+              player.setVolume(vol, vol)
+            end)
+            Thread.sleep(50)
+          end
+        end
+      end)
+
+      stopCurrent()
+
+      pcall(function()
+        if player ~= nil then
+          player.setVolume(1.0, 1.0)
+        end
+      end)
+
+      cancelSleepTimer()
+      toast(T("sleepTimerFinished"))
+    end
+  }
+
+  pcall(function()
+    sleepHandler.postDelayed(sleepRunnable, minutes * 60 * 1000)
+  end)
+
+  toast(T("sleepTimer") .. ": " .. tostring(minutes) .. " " .. T("minutes"))
+end
+
+-- =====================================================================
+-- MEDIA SCANNING
+-- =====================================================================
+
+local function applySorting()
+  if sortMode == "Title" then
+    table.sort(audioList, function(a, b)
+      return normalize(a.title) < normalize(b.title)
+    end)
+  elseif sortMode == "Artist" then
+    table.sort(audioList, function(a, b)
+      local aa = normalize(a.artist)
+      local ab = normalize(b.artist)
+      if aa == ab then
+        return normalize(a.title) < normalize(b.title)
+      end
+      return aa < ab
+    end)
+  elseif sortMode == "Duration" then
+    table.sort(audioList, function(a, b)
+      return (a.duration or 0) < (b.duration or 0)
+    end)
+  elseif sortMode == "Date" then
+    table.sort(audioList, function(a, b)
+      return (a.dateAdded or 0) > (b.dateAdded or 0)
+    end)
+  end
+end
+
+local function scanAudioFiles()
+  audioList = {}
+  visibleList = {}
+
+  local cursor = nil
+
+  pcall(function()
+    local resolver = context.getContentResolver()
+    local uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+
+    local projection = {
+      MediaStore.Audio.Media.DATA,
+      MediaStore.Audio.Media.TITLE,
+      MediaStore.Audio.Media.ARTIST,
+      MediaStore.Audio.Media.DURATION,
+      MediaStore.Audio.Media.DATE_ADDED,
+      MediaStore.Audio.Media.ALBUM
+    }
+
+    cursor = resolver.query(
+      uri,
+      projection,
+      MediaStore.Audio.Media.IS_MUSIC .. " != 0",
+      nil,
+      nil
+    )
+
+    if cursor ~= nil then
+      local pathColumn = cursor.getColumnIndex(MediaStore.Audio.Media.DATA)
+      local titleColumn = cursor.getColumnIndex(MediaStore.Audio.Media.TITLE)
+      local artistColumn = cursor.getColumnIndex(MediaStore.Audio.Media.ARTIST)
+      local durationColumn = cursor.getColumnIndex(MediaStore.Audio.Media.DURATION)
+      local dateColumn = cursor.getColumnIndex(MediaStore.Audio.Media.DATE_ADDED)
+      local albumColumn = cursor.getColumnIndex(MediaStore.Audio.Media.ALBUM)
+
+      while cursor.moveToNext() do
+        local path = cursor.getString(pathColumn)
+        local title = cursor.getString(titleColumn)
+        local artist = cursor.getString(artistColumn)
+        local duration = cursor.getLong(durationColumn)
+        local dateAdded = cursor.getLong(dateColumn)
+        local album = cursor.getString(albumColumn)
+
+        if path ~= nil and fileExists(path) and isAudioFile(path) then
+          table.insert(audioList, {
+            path = tostring(path),
+            title = tostring(title or removeExtension(getFileName(path))),
+            artist = tostring(artist or ""),
+            album = tostring(album or ""),
+            duration = tonumber(duration or 0) or 0,
+            dateAdded = tonumber(dateAdded or 0) or 0
+          })
+        end
+      end
+    end
+  end)
+
+  pcall(function()
+    if cursor ~= nil then
+      cursor.close()
+    end
+  end)
+
+  applySorting()
+
+  for i = 1, #audioList do
+    table.insert(visibleList, audioList[i])
+  end
+
+  local lastPath = getString("lastPath", "")
+
+  if lastPath ~= "" then
+    for i = 1, #visibleList do
+      if visibleList[i].path == lastPath then
+        currentIndex = i
+        currentPath = visibleList[i].path
+        currentTitle = visibleList[i].title
+        break
+      end
+    end
+  end
+end
+
+local function filterAudio(query)
+  query = normalize(query)
+  visibleList = {}
+
+  local sourceList = audioList
+
+  if showRecentlyPlayed then
+    sourceList = recentlyPlayed
+  end
+
+  for i = 1, #sourceList do
+    local item = sourceList[i]
+    local matched = false
+
+    if query == "" then
+      matched = true
+    elseif normalize(item.title):find(query, 1, true) then
+      matched = true
+    elseif normalize(item.artist):find(query, 1, true) then
+      matched = true
+    elseif normalize(item.path):find(query, 1, true) then
+      matched = true
+    end
+
+    if showFavoritesOnly then
+      matched = matched and isFavorite(item.path)
+    end
+
+    if matched then
+      table.insert(visibleList, item)
+    end
+  end
+end
+
+local function refreshListAdapter()
+  if listView == nil then
+    return
+  end
+
+  local names = ArrayList()
+
+  for i = 1, #visibleList do
+    local item = visibleList[i]
+    local text = item.title
+
+    if isFavorite(item.path) then
+      text = "★ " .. text
+    end
+
+    if showMetadata then
+      local details = {}
+
+      if item.artist ~= "" and item.artist ~= "<unknown>" then
+        table.insert(details, item.artist)
+      end
+
+      if item.duration and item.duration > 0 then
+        table.insert(details, formatTime(item.duration))
+      end
+
+      if #details > 0 then
+        text = text .. "\n" .. table.concat(details, " • ")
+      end
+    end
+
+    names.add(text)
+  end
+
+  local adapter = ArrayAdapter(
+    context,
+    android.R.layout.simple_list_item_1,
+    names
+  )
+
+  listView.setAdapter(adapter)
+end
+
+-- =====================================================================
+-- DIALOGS - INFO / SHARE / RENAME / DELETE
+-- =====================================================================
+
+local function showAudioInfo(item)
+  if item == nil then
+    return
+  end
+
+  local message = "Title: " .. tostring(item.title or "") .. "\n\n"
+  message = message .. "Artist: " .. tostring(item.artist or "") .. "\n\n"
+  message = message .. "Album: " .. tostring(item.album or "") .. "\n\n"
+  message = message .. "Path: " .. tostring(item.path or "") .. "\n\n"
+  message = message .. "Duration: " .. formatTime(item.duration or 0) .. "\n\n"
+  message = message .. "Favorite: " .. (isFavorite(item.path) and T("yes") or T("no"))
+
+  local dialog = AlertDialog.Builder(context)
+    .setTitle(T("information"))
+    .setMessage(message)
+    .setPositiveButton(T("close"), nil)
+    .create()
+
+  showDialogSafely(dialog)
+end
+
+local function shareAudio(path)
+  if path == nil then
+    return
+  end
+
+  pcall(function()
+    local file = File(path)
+    local uri = Uri.fromFile(file)
+    local intent = Intent(Intent.ACTION_SEND)
+
+    intent.setType("audio/*")
+    intent.putExtra(Intent.EXTRA_STREAM, uri)
+    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+
+    context.startActivity(Intent.createChooser(intent, T("share")))
+  end)
+end
+
+local function renameAudio(item)
+  if item == nil or item.path == nil then
+    return
+  end
+
+  local oldFile = File(item.path)
+  local oldName = oldFile.getName()
+  local extension = oldName:match("(%.[^%.]+)$") or ""
+  local defaultName = removeExtension(oldName)
+
+  local input = EditText(context)
+  input.setText(defaultName)
+  input.setSelectAllOnFocus(true)
+
+  local layout = LinearLayout(context)
+  layout.setOrientation(LinearLayout.VERTICAL)
+  layout.setPadding(dp(20), dp(10), dp(20), dp(10))
+  layout.addView(input)
+
+  local dialog = AlertDialog.Builder(context)
+    .setTitle(T("rename"))
+    .setMessage(T("enterName"))
+    .setView(layout)
+    .setNegativeButton(T("cancel"), nil)
+    .setPositiveButton(T("save"), {
+      onClick = function()
+        local newName = tostring(input.getText())
+
+        if newName == "" then
+          return
+        end
+
+        if not newName:match("%.[^%.]+$") then
+          newName = newName .. extension
+        end
+
+        local parent = oldFile.getParentFile()
+        local newFile = File(parent, newName)
+
+        if newFile.exists() then
+          toast("A file with this name already exists")
+          return
+        end
+
+        local success = false
+
+        pcall(function()
+          success = oldFile.renameTo(newFile)
+        end)
+
+        if success then
+          if currentPath == item.path then
+            currentPath = newFile.getAbsolutePath()
+            saveString("lastPath", currentPath)
+          end
+
+          scanAudioFiles()
+          filterAudio(searchEdit and tostring(searchEdit.getText()) or "")
+          refreshListAdapter()
+          toast(T("songRenamed"))
+        else
+          toast("Rename failed")
+        end
+      end
+    })
+    .create()
+
+  showDialogSafely(dialog)
+end
+
+local function deleteAudio(item)
+  if item == nil or item.path == nil then
+    return
+  end
+
+  local function performDelete()
+    local success = false
+
+    pcall(function()
+      success = File(item.path).delete()
+    end)
+
+    if success then
+      if currentPath == item.path then
+        releasePlayer()
+        currentPath = nil
+        currentTitle = nil
+      end
+
+      clearSavedPositionForPath(item.path)
+      setFavorite(item.path, false)
+
+      scanAudioFiles()
+      filterAudio(searchEdit and tostring(searchEdit.getText()) or "")
+      refreshListAdapter()
+      updateNowPlaying()
+      toast(T("songDeleted"))
+    else
+      toast("Delete failed")
+    end
+  end
+
+  if not confirmDelete then
+    performDelete()
+    return
+  end
+
+  local dialog = AlertDialog.Builder(context)
+    .setTitle(T("delete"))
+    .setMessage(T("confirmDeleteText"))
+    .setNegativeButton(T("no"), nil)
+    .setPositiveButton(T("yes"), {
+      onClick = function()
+        performDelete()
+      end
+    })
+    .create()
+
+  showDialogSafely(dialog)
+end
+
+local function toggleFavorite(item)
+  if item == nil then
+    return
+  end
+
+  local newValue = not isFavorite(item.path)
+  setFavorite(item.path, newValue)
+
+  if newValue then
+    toast(T("favoriteAdded"))
+  else
+    toast(T("favoriteRemoved"))
+  end
+
+  filterAudio(searchEdit and tostring(searchEdit.getText()) or "")
+  refreshListAdapter()
+end
+
+local function addItemToQueue(item, playNextInQueue)
+  if item == nil then
+    return
+  end
+
+  local entry = {
+    path = item.path,
+    title = item.title,
+    artist = item.artist,
+    duration = item.duration
+  }
+
+  if playNextInQueue then
+    table.insert(queue, 1, entry)
+    toast(T("addedToPlayNext"))
+  else
+    table.insert(queue, entry)
+    toast(T("addedToQueue"))
+  end
+end
+
+local function showItemMenu(item)
+  if item == nil then
+    return
+  end
+
+  local favoriteText = T("addFavorite")
+  if isFavorite(item.path) then
+    favoriteText = T("removeFavorite")
+  end
+
+  local options = {
+    T("play"),
+    T("playNext"),
+    T("addToQueue"),
+    favoriteText,
+    T("rename"),
+    T("delete"),
+    T("share"),
+    T("information"),
+    T("cancel")
+  }
+
+  local dialog = AlertDialog.Builder(context)
+    .setTitle(item.title)
+    .setItems(options, {
+      onClick = function(dialogObject, which)
+        if which == 0 then
+          for i = 1, #visibleList do
+            if visibleList[i].path == item.path then
+              playItem(i)
+              break
+            end
+          end
+        elseif which == 1 then
+          addItemToQueue(item, true)
+        elseif which == 2 then
+          addItemToQueue(item, false)
+        elseif which == 3 then
+          toggleFavorite(item)
+        elseif which == 4 then
+          renameAudio(item)
+        elseif which == 5 then
+          deleteAudio(item)
+        elseif which == 6 then
+          shareAudio(item.path)
+        elseif which == 7 then
+          showAudioInfo(item)
+        end
+      end
+    })
+    .create()
+
+  showDialogSafely(dialog)
+end
+
+-- =====================================================================
+-- QUEUE DIALOG
+-- =====================================================================
+
+local function showQueueDialog()
+  if #queue == 0 then
+    local dialog = AlertDialog.Builder(context)
+      .setTitle(T("queue"))
+      .setMessage(T("queueEmpty"))
+      .setPositiveButton(T("close"), nil)
+      .create()
+    showDialogSafely(dialog)
+    return
+  end
+
+  local names = ArrayList()
+
+  for i = 1, #queue do
+    names.add(tostring(i) .. ". " .. tostring(queue[i].title or ""))
+  end
+
+  local dialog = AlertDialog.Builder(context)
+    .setTitle(T("queue") .. " (" .. tostring(#queue) .. ")")
+    .setItems(names, {
+      onClick = function(d, which)
+        local item = queue[which + 1]
+        if item ~= nil then
+          table.remove(queue, which + 1)
+          loadAndPlayPath(item.path, item.title, 0)
+        end
+      end
+    })
+    .setNeutralButton(T("clearQueue"), {
+      onClick = function()
+        queue = {}
+        toast(T("clearQueue"))
+      end
+    })
+    .setNegativeButton(T("close"), nil)
+    .create()
+
+  queueDialog = dialog
+  showDialogSafely(dialog)
+end
+
+-- =====================================================================
+-- UI HELPERS
+-- =====================================================================
+
+local function createButton(text, callback)
+  local button = Button(context)
+  button.setText(tostring(text))
+  button.setAllCaps(false)
+
+  button.setOnClickListener{
+    onClick = function()
+      pcall(callback)
+    end
+  }
+
+  return button
+end
+
+local function createLabel(text)
+  local label = TextView(context)
+  label.setText(tostring(text))
+  label.setPadding(0, dp(8), 0, dp(4))
+  return label
+end
+
+-- =====================================================================
+-- ABOUT
+-- =====================================================================
+
+local function showAbout()
+  aboutDialog = AlertDialog.Builder(context)
+    .setTitle(T("about"))
+    .setMessage(T("aboutText"))
+    .setPositiveButton(T("close"), nil)
+    .create()
+
+  showDialogSafely(aboutDialog)
+end
+
+-- =====================================================================
+-- SETTINGS DIALOG
+-- =====================================================================
+
+local function showSettings()
+  local scroll = ScrollView(context)
+  local layout = LinearLayout(context)
+  layout.setOrientation(LinearLayout.VERTICAL)
+  layout.setPadding(dp(20), dp(10), dp(20), dp(10))
+  scroll.addView(layout)
+
+  layout.addView(createLabel(T("theme")))
+  local themeSpinner = Spinner(context)
+  local themeItems = ArrayList()
+  themeItems.add("System")
+  themeItems.add("Light")
+  themeItems.add("Dark")
+  themeSpinner.setAdapter(ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, themeItems))
+
+  local themePosition = 0
+  if currentTheme == "Light" then
+    themePosition = 1
+  elseif currentTheme == "Dark" then
+    themePosition = 2
+  end
+  themeSpinner.setSelection(themePosition)
+  layout.addView(themeSpinner)
+
+  layout.addView(createLabel(T("sortBy")))
+  local sortSpinner = Spinner(context)
+  local sortItems = ArrayList()
+  sortItems.add(T("sortTitle"))
+  sortItems.add(T("sortArtist"))
+  sortItems.add(T("sortDuration"))
+  sortItems.add(T("sortDate"))
+  sortSpinner.setAdapter(ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, sortItems))
+
+  local sortPosition = 0
+  if sortMode == "Artist" then
+    sortPosition = 1
+  elseif sortMode == "Duration" then
+    sortPosition = 2
+  elseif sortMode == "Date" then
+    sortPosition = 3
+  end
+  sortSpinner.setSelection(sortPosition)
+  layout.addView(sortSpinner)
+
+  layout.addView(createLabel(T("forward") .. " / " .. T("rewind") .. " (" .. T("seconds") .. ")"))
+  local skipSpinner = Spinner(context)
+  local skipItems = ArrayList()
+  skipItems.add("5")
+  skipItems.add("10")
+  skipItems.add("15")
+  skipItems.add("30")
+  skipItems.add("60")
+  skipSpinner.setAdapter(ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, skipItems))
+
+  local skipPosition = 1
+  if skipSeconds == 5 then
+    skipPosition = 0
+  elseif skipSeconds == 15 then
+    skipPosition = 2
+  elseif skipSeconds == 30 then
+    skipPosition = 3
+  elseif skipSeconds == 60 then
+    skipPosition = 4
+  end
+  skipSpinner.setSelection(skipPosition)
+  layout.addView(skipSpinner)
+
+  layout.addView(createLabel(T("speed")))
+  local speedSpinner = Spinner(context)
+  local speedItems = ArrayList()
+  local speedValuesList = {0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0}
+
+  for i = 1, #speedValuesList do
+    speedItems.add(tostring(speedValuesList[i]))
+  end
+
+  speedSpinner.setAdapter(ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, speedItems))
+
+  local speedPosition = 2
+  for i = 1, #speedValuesList do
+    if math.abs(speedValuesList[i] - playbackSpeed) < 0.01 then
+      speedPosition = i - 1
+      break
+    end
+  end
+  speedSpinner.setSelection(speedPosition)
+  layout.addView(speedSpinner)
+
+  layout.addView(createLabel(T("repeat")))
+  local repeatSpinner = Spinner(context)
+  local repeatItems = ArrayList()
+  repeatItems.add("OFF")
+  repeatItems.add("ALL")
+  repeatItems.add("ONE")
+  repeatSpinner.setAdapter(ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, repeatItems))
+
+  local repeatPosition = 0
+  if repeatMode == "ALL" then
+    repeatPosition = 1
+  elseif repeatMode == "ONE" then
+    repeatPosition = 2
+  end
+  repeatSpinner.setSelection(repeatPosition)
+  layout.addView(repeatSpinner)
+
+  local shuffleCheck = CheckBox(context)
+  shuffleCheck.setText(T("shuffle"))
+  shuffleCheck.setChecked(shuffleEnabled)
+  layout.addView(shuffleCheck)
+
+  local autoNextCheck = CheckBox(context)
+  autoNextCheck.setText("Auto Next")
+  autoNextCheck.setChecked(autoNext)
+  layout.addView(autoNextCheck)
+
+  local resumeCheck = CheckBox(context)
+  resumeCheck.setText("Resume Playback")
+  resumeCheck.setChecked(resumePlayback)
+  layout.addView(resumeCheck)
+
+  local metadataCheck = CheckBox(context)
+  metadataCheck.setText("Show Metadata")
+  metadataCheck.setChecked(showMetadata)
+  layout.addView(metadataCheck)
+
+  local deleteCheck = CheckBox(context)
+  deleteCheck.setText("Confirm Delete")
+  deleteCheck.setChecked(confirmDelete)
+  layout.addView(deleteCheck)
+
+  local backgroundCheck = CheckBox(context)
+  backgroundCheck.setText("Background Playback")
+  backgroundCheck.setChecked(backgroundPlayback)
+  layout.addView(backgroundCheck)
+
+  -- =====================================================================
+  -- EQUALIZER SECTION IN SETTINGS
+  -- =====================================================================
+  layout.addView(createLabel(T("equalizer")))
+
+  local eqCheck = CheckBox(context)
+  eqCheck.setText(T("equalizer") .. ": " .. T("enabled"))
+  eqCheck.setChecked(getBoolean("eqEnabled", false))
+  layout.addView(eqCheck)
+
+  local bandCount = 5
+  pcall(function()
+    if equalizer ~= nil then
+      bandCount = equalizer.getNumberOfBands()
+    end
+  end)
+
+  if bandCount > 8 then
+    bandCount = 8
+  end
+
+  local bandSeekBars = {}
+  local bandRange = nil
+
+  pcall(function()
+    if equalizer ~= nil then
+      bandRange = equalizer.getBandLevelRange()
+    end
+  end)
+
+  local minLevel = -1500
+  local maxLevel = 1500
+
+  if bandRange ~= nil and #bandRange >= 2 then
+    minLevel = bandRange[1]
+    maxLevel = bandRange[2]
+  end
+
+  for i = 0, bandCount - 1 do
+    local freq = 0
+    local level = 0
+
+    pcall(function()
+      if equalizer ~= nil then
+        freq = equalizer.getCenterFreq(i) / 1000
+        level = equalizer.getBandLevel(i)
+      end
+    end)
+
+    local label = TextView(context)
+    label.setText(tostring(freq) .. " Hz")
+    layout.addView(label)
+
+    local bar = SeekBar(context)
+    bar.setMax(maxLevel - minLevel)
+    bar.setProgress(level - minLevel)
+    bandSeekBars[i] = { bar = bar, band = i }
+
+    layout.addView(bar)
+  end
+
+  local bassCheck = CheckBox(context)
+  bassCheck.setText(T("bassBoost"))
+  bassCheck.setChecked(getBoolean("bassEnabled", false))
+  layout.addView(bassCheck)
+
+  local bassLabel = TextView(context)
+  bassLabel.setText("Bass Strength")
+  layout.addView(bassLabel)
+
+  local bassBar = SeekBar(context)
+  bassBar.setMax(1000)
+  bassBar.setProgress(getInteger("bassStrength", 500))
+  layout.addView(bassBar)
+  -- =====================================================================
+
+  layout.addView(createLabel(T("sleepTimer")))
+  local sleepSpinner = Spinner(context)
+  local sleepItems = ArrayList()
+  local sleepValues = {0, 5, 10, 15, 30, 45, 60, 90, 120, 180}
+
+  for i = 1, #sleepValues do
+    if sleepValues[i] == 0 then
+      sleepItems.add(T("off"))
+    else
+      sleepItems.add(tostring(sleepValues[i]) .. " " .. T("minutes"))
+    end
+  end
+
+  sleepSpinner.setAdapter(ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, sleepItems))
+
+  local sleepPosition = 0
+  for i = 1, #sleepValues do
+    if sleepValues[i] == sleepTimerMinutes then
+      sleepPosition = i - 1
+      break
+    end
+  end
+  sleepSpinner.setSelection(sleepPosition)
+  layout.addView(sleepSpinner)
+
+  settingsDialog = AlertDialog.Builder(context)
+    .setTitle(T("settings"))
+    .setView(scroll)
+    .setNegativeButton(T("cancel"), nil)
+    .setNeutralButton(T("reset"), {
+      onClick = function()
+        currentTheme = "System"
+        skipSeconds = 10
+        playbackSpeed = 1.0
+        repeatMode = "OFF"
+        shuffleEnabled = false
+        autoNext = true
+        resumePlayback = true
+        confirmDelete = true
+        showMetadata = true
+        backgroundPlayback = true
+        sleepTimerMinutes = 0
+        sortMode = "Title"
+
+        saveString("theme", currentTheme)
+        saveInteger("skipSeconds", skipSeconds)
+        saveFloat("playbackSpeed", playbackSpeed)
+        saveString("repeatMode", repeatMode)
+        saveBoolean("shuffleEnabled", shuffleEnabled)
+        saveBoolean("autoNext", autoNext)
+        saveBoolean("resumePlayback", resumePlayback)
+        saveBoolean("confirmDelete", confirmDelete)
+        saveBoolean("showMetadata", showMetadata)
+        saveBoolean("backgroundPlayback", backgroundPlayback)
+        saveInteger("sleepTimerMinutes", 0)
+        saveString("sortMode", sortMode)
+        saveBoolean("eqEnabled", false)
+        saveBoolean("bassEnabled", false)
+        saveInteger("bassStrength", 500)
+
+        cancelSleepTimer()
+        updateButtons()
+        refreshListAdapter()
+        toast(T("settingsSaved"))
+      end
+    })
+    .setPositiveButton(T("save"), {
+      onClick = function()
+        local selectedTheme = themeSpinner.getSelectedItemPosition()
+        if selectedTheme == 0 then
+          currentTheme = "System"
+        elseif selectedTheme == 1 then
+          currentTheme = "Light"
+        else
+          currentTheme = "Dark"
+        end
+
+        local selectedSort = sortSpinner.getSelectedItemPosition()
+        if selectedSort == 0 then
+          sortMode = "Title"
+        elseif selectedSort == 1 then
+          sortMode = "Artist"
+        elseif selectedSort == 2 then
+          sortMode = "Duration"
+        else
+          sortMode = "Date"
+        end
+
+        local skipValues = {5, 10, 15, 30, 60}
+        skipSeconds = skipValues[skipSpinner.getSelectedItemPosition() + 1] or 10
+
+        playbackSpeed = speedValuesList[speedSpinner.getSelectedItemPosition() + 1] or 1.0
+
+        local repeatValues = {"OFF", "ALL", "ONE"}
+        repeatMode = repeatValues[repeatSpinner.getSelectedItemPosition() + 1] or "OFF"
+
+        shuffleEnabled = shuffleCheck.isChecked()
+        autoNext = autoNextCheck.isChecked()
+        resumePlayback = resumeCheck.isChecked()
+        showMetadata = metadataCheck.isChecked()
+        confirmDelete = deleteCheck.isChecked()
+        backgroundPlayback = backgroundCheck.isChecked()
+
+        sleepTimerMinutes = sleepValues[sleepSpinner.getSelectedItemPosition() + 1] or 0
+
+        local eqEnabled = eqCheck.isChecked()
+        local bassEnabled = bassCheck.isChecked()
+        local bassStrength = bassBar.getProgress()
+
+        saveString("theme", currentTheme)
+        saveString("sortMode", sortMode)
+        saveInteger("skipSeconds", skipSeconds)
+        saveFloat("playbackSpeed", playbackSpeed)
+        saveString("repeatMode", repeatMode)
+        saveBoolean("shuffleEnabled", shuffleEnabled)
+        saveBoolean("autoNext", autoNext)
+        saveBoolean("resumePlayback", resumePlayback)
+        saveBoolean("confirmDelete", confirmDelete)
+        saveBoolean("showMetadata", showMetadata)
+        saveBoolean("backgroundPlayback", backgroundPlayback)
+        saveInteger("sleepTimerMinutes", sleepTimerMinutes)
+        saveBoolean("eqEnabled", eqEnabled)
+        saveBoolean("bassEnabled", bassEnabled)
+        saveInteger("bassStrength", bassStrength)
+
+        pcall(function()
+          if equalizer ~= nil then
+            equalizer.setEnabled(eqEnabled)
+
+            for i = 0, bandCount - 1 do
+              local entry = bandSeekBars[i]
+              if entry ~= nil then
+                local level = entry.bar.getProgress() + minLevel
+                equalizer.setBandLevel(i, level)
+              end
+            end
+          end
+        end)
+
+        pcall(function()
+          if bassBoost ~= nil then
+            bassBoost.setEnabled(bassEnabled)
+            bassBoost.setStrength(bassStrength)
+          end
+        end)
+
+        if sleepTimerMinutes > 0 then
+          setSleepTimer(sleepTimerMinutes)
+        else
+          cancelSleepTimer()
+        end
+
+        setPlaybackSpeed()
+        applySorting()
+        scanAudioFiles()
+        filterAudio(searchEdit and tostring(searchEdit.getText()) or "")
+        updateButtons()
+        refreshListAdapter()
+        toast(T("settingsSaved"))
+      end
+    })
+    .create()
+
+  showDialogSafely(settingsDialog)
+end
+
+-- =====================================================================
+-- MAIN DIALOG
+-- =====================================================================
+
+local function showMainDialog()
+  scanAudioFiles()
+
+  local root = LinearLayout(context)
+  root.setOrientation(LinearLayout.VERTICAL)
+  root.setPadding(dp(12), dp(8), dp(12), dp(8))
+
+  local heading = TextView(context)
+  heading.setText(APP_NAME)
+  heading.setTextSize(18)
+  heading.setGravity(Gravity.CENTER)
+  root.addView(heading)
+
+  local devView = TextView(context)
+  devView.setText(DEVELOPER)
+  devView.setTextSize(12)
+  devView.setGravity(Gravity.CENTER)
+  root.addView(devView)
+
+  titleView = TextView(context)
+  titleView.setText(currentTitle or APP_NAME)
+  titleView.setTextSize(16)
+  titleView.setGravity(Gravity.CENTER)
+  root.addView(titleView)
+
+  subtitleView = TextView(context)
+  subtitleView.setText("")
+  subtitleView.setGravity(Gravity.CENTER)
+  root.addView(subtitleView)
+
+  local controlLayout = LinearLayout(context)
+  controlLayout.setOrientation(LinearLayout.VERTICAL)
+
+  local firstRow = LinearLayout(context)
+  firstRow.setOrientation(LinearLayout.HORIZONTAL)
+
+  local previousButton = createButton(T("previous"), function()
+    playPrevious()
+  end)
+
+  playButton = createButton(T("play"), function()
+    playCurrent()
+  end)
+
+  local nextButton = createButton(T("next"), function()
+    playNext()
+  end)
+
+  firstRow.addView(previousButton, LinearLayout.LayoutParams(0, -2, 1))
+  firstRow.addView(playButton, LinearLayout.LayoutParams(0, -2, 1))
+  firstRow.addView(nextButton, LinearLayout.LayoutParams(0, -2, 1))
+  controlLayout.addView(firstRow)
+
+  local secondRow = LinearLayout(context)
+  secondRow.setOrientation(LinearLayout.HORIZONTAL)
+
+  local rewindButton = createButton("<< " .. tostring(skipSeconds) .. "s", function()
+    seekRelative(-skipSeconds * 1000)
+  end)
+
+  local stopButton = createButton(T("stop"), function()
+    stopCurrent()
+  end)
+
+  local forwardButton = createButton(tostring(skipSeconds) .. "s >>", function()
+    seekRelative(skipSeconds * 1000)
+  end)
+
+  secondRow.addView(rewindButton, LinearLayout.LayoutParams(0, -2, 1))
+  secondRow.addView(stopButton, LinearLayout.LayoutParams(0, -2, 1))
+  secondRow.addView(forwardButton, LinearLayout.LayoutParams(0, -2, 1))
+  controlLayout.addView(secondRow)
+
+  seekBar = SeekBar(context)
+  seekBar.setMax(1000)
+
+  seekBar.setOnSeekBarChangeListener{
+    onProgressChanged = function(bar, progress, fromUser)
+      if fromUser then
+        if positionView ~= nil then
+          local duration = 0
+          pcall(function()
+            if player ~= nil then
+              duration = player.getDuration()
+            end
+          end)
+
+          if duration > 0 then
+            positionView.setText(formatTime(math.floor(duration * progress / 1000)))
+          end
+        end
+      end
+    end,
+
+    onStartTrackingTouch = function(bar)
+      isSeeking = true
+    end,
+
+    onStopTrackingTouch = function(bar)
+      if player ~= nil and isPrepared then
+        local duration = 0
+        pcall(function()
+          duration = player.getDuration()
+        end)
+
+        if duration > 0 then
+          local newPosition = math.floor(duration * bar.getProgress() / 1000)
+          pcall(function()
+            player.seekTo(newPosition)
+          end)
+        end
+      end
+
+      isSeeking = false
+    end
+  }
+
+  controlLayout.addView(seekBar)
+
+  local timeRow = LinearLayout(context)
+  timeRow.setOrientation(LinearLayout.HORIZONTAL)
+
+  positionView = TextView(context)
+  positionView.setText("00:00")
+
+  durationView = TextView(context)
+  durationView.setText("00:00")
+  durationView.setGravity(Gravity.RIGHT)
+
+  timeRow.addView(positionView, LinearLayout.LayoutParams(0, -2, 1))
+  timeRow.addView(durationView, LinearLayout.LayoutParams(0, -2, 1))
+  controlLayout.addView(timeRow)
+
+  local thirdRow = LinearLayout(context)
+  thirdRow.setOrientation(LinearLayout.HORIZONTAL)
+
+  repeatButton = createButton(T("repeat") .. ": " .. repeatMode, function()
+    cycleRepeat()
+  end)
+
+  shuffleButton = createButton(T("shuffle"), function()
+    cycleShuffle()
+  end)
+
+  speedButton = createButton(T("speed"), function()
+    cycleSpeed()
+  end)
+
+  thirdRow.addView(repeatButton, LinearLayout.LayoutParams(0, -2, 1))
+  thirdRow.addView(shuffleButton, LinearLayout.LayoutParams(0, -2, 1))
+  thirdRow.addView(speedButton, LinearLayout.LayoutParams(0, -2, 1))
+  controlLayout.addView(thirdRow)
+
+  local fourthRow = LinearLayout(context)
+  fourthRow.setOrientation(LinearLayout.HORIZONTAL)
+
+  abButton = createButton("A-B", function()
+    cycleABRepeat()
+  end)
+
+  local queueButton = createButton(T("viewQueue"), function()
+    showQueueDialog()
+  end)
+
+  fourthRow.addView(abButton, LinearLayout.LayoutParams(0, -2, 1))
+  fourthRow.addView(queueButton, LinearLayout.LayoutParams(0, -2, 2))
+  controlLayout.addView(fourthRow)
+
+  root.addView(controlLayout)
+
+  local searchRow = LinearLayout(context)
+  searchRow.setOrientation(LinearLayout.HORIZONTAL)
+
+  searchEdit = EditText(context)
+  searchEdit.setHint(T("search"))
+  searchEdit.setSingleLine(true)
+
+  local searchButton = createButton(T("search"), function()
+    filterAudio(tostring(searchEdit.getText()))
+    refreshListAdapter()
+  end)
+
+  searchRow.addView(searchEdit, LinearLayout.LayoutParams(0, -2, 1))
+  searchRow.addView(searchButton, LinearLayout.LayoutParams(-2, -2))
+  root.addView(searchRow)
+
+  local filterRow = LinearLayout(context)
+  filterRow.setOrientation(LinearLayout.HORIZONTAL)
+
+  local allButton = createButton(T("allSongs"), function()
+    showFavoritesOnly = false
+    showRecentlyPlayed = false
+    filterAudio(tostring(searchEdit.getText()))
+    refreshListAdapter()
+  end)
+
+  local favoriteButton = createButton(T("favorites"), function()
+    showFavoritesOnly = true
+    showRecentlyPlayed = false
+    filterAudio(tostring(searchEdit.getText()))
+    refreshListAdapter()
+
+    if #visibleList == 0 then
+      toast(T("noFavorites"))
+    end
+  end)
+
+  local recentButton = createButton(T("recentlyPlayed"), function()
+    showFavoritesOnly = false
+    showRecentlyPlayed = true
+    filterAudio(tostring(searchEdit.getText()))
+    refreshListAdapter()
+  end)
+
+  filterRow.addView(allButton, LinearLayout.LayoutParams(0, -2, 1))
+  filterRow.addView(favoriteButton, LinearLayout.LayoutParams(0, -2, 1))
+  filterRow.addView(recentButton, LinearLayout.LayoutParams(0, -2, 1))
+  root.addView(filterRow)
+
+  local filterRow2 = LinearLayout(context)
+  filterRow2.setOrientation(LinearLayout.HORIZONTAL)
+
+  local refreshButton = createButton(T("refresh"), function()
+    scanAudioFiles()
+    filterAudio(tostring(searchEdit.getText()))
+    refreshListAdapter()
+    toast(T("refresh"))
+  end)
+
+  local settingsButton = createButton(T("settings"), function()
+    showSettings()
+  end)
+
+  local aboutButton = createButton(T("about"), function()
+    showAbout()
+  end)
+
+  filterRow2.addView(refreshButton, LinearLayout.LayoutParams(0, -2, 1))
+  filterRow2.addView(settingsButton, LinearLayout.LayoutParams(0, -2, 1))
+  filterRow2.addView(aboutButton, LinearLayout.LayoutParams(0, -2, 1))
+  root.addView(filterRow2)
+
+  listView = ListView(context)
+
+  listView.setOnItemClickListener{
+    onItemClick = function(parent, view, position, id)
+      playItem(position + 1)
+    end
+  }
+
+  listView.setOnItemLongClickListener{
+    onItemLongClick = function(parent, view, position, id)
+      showItemMenu(visibleList[position + 1])
+      return true
+    end
+  }
+
+  root.addView(listView, LinearLayout.LayoutParams(-1, 0, 1))
+
+  local bottomRow = LinearLayout(context)
+  bottomRow.setOrientation(LinearLayout.HORIZONTAL)
+
+  local closeButton = createButton(T("exit"), function()
+    savePositionForPath(currentPath)
+    releasePlayer()
+    abandonAudioFocus()
+    releaseWakeLock()
+    cancelSleepTimer()
+
+    pcall(function()
+      if mainDialog ~= nil then
+        mainDialog.dismiss()
+      end
+    end)
+  end)
+
+  bottomRow.addView(closeButton, LinearLayout.LayoutParams(-1, -2))
+  root.addView(bottomRow)
+
+  mainDialog = AlertDialog.Builder(context)
+    .setTitle(APP_NAME)
+    .setView(root)
+    .create()
+
+  mainDialog.setOnDismissListener{
+    onDismiss = function()
+      stopProgressUpdater()
+    end
+  }
+
+  showDialogSafely(mainDialog)
+
+  filterAudio("")
+  refreshListAdapter()
+  updateNowPlaying()
+  updateButtons()
+end
+
+-- =====================================================================
+-- STARTUP
+-- =====================================================================
+
+pcall(function()
+  if mainDialog ~= nil then
+    mainDialog.dismiss()
+  end
+end)
+
+showMainDialog()
