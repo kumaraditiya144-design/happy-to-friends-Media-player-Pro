@@ -27,7 +27,7 @@ end
 local APP_NAME = "Happy TOO Friends audio player pro"
 local DEVELOPER = "Developed by Aditya Poddar"
 local PREF_NAME = "HappyTooFriendsAudioPlayerProPrefs"
-local VERSION = "2.0"
+local VERSION = "2.2"
 
 -- =====================================================================
 -- PREFERENCES
